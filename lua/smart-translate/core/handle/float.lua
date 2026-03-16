@@ -1,12 +1,34 @@
 local float = {}
 
-local manager = {}
+local api = vim.api
 local cache_scrolloff = vim.opt.scrolloff:get()
+
+--- Check if a preview window with the given id is open
+---@param id string
+---@return integer? winid
+local function is_open(id)
+    for _, winid in ipairs(api.nvim_list_wins()) do
+        if vim.w[winid].smart_translate_preview == id then
+            return winid
+        end
+    end
+end
+
+--- Focus the open preview window if it exists
+---@param id string
+---@return integer? winid
+local function focus_open(id)
+    local winid = is_open(id)
+    if winid then
+        api.nvim_set_current_win(winid)
+    end
+    return winid
+end
 
 local function footer_handle(winner, bufnr)
     local cursor_line = vim.fn.line(".", winner)
-    local buffer_total_line = vim.api.nvim_buf_line_count(bufnr)
-    local window_height = vim.api.nvim_win_get_height(winner)
+    local buffer_total_line = api.nvim_buf_line_count(bufnr)
+    local window_height = api.nvim_win_get_height(winner)
     local window_last_line = vim.fn.line("w$", winner)
 
     local progress = math.floor(window_last_line / buffer_total_line * 100)
@@ -21,7 +43,7 @@ local function footer_handle(winner, bufnr)
 
     local footer = ("%s%%"):format(progress)
 
-    vim.api.nvim_win_set_config(winner, {
+    api.nvim_win_set_config(winner, {
         footer = footer,
         footer_pos = "right",
     })
@@ -29,7 +51,7 @@ end
 
 local function scroll_hover(count, winner, bufnr)
     local cursor_line = vim.fn.line(".", winner)
-    local buffer_line_count = vim.api.nvim_buf_line_count(bufnr)
+    local buffer_line_count = api.nvim_buf_line_count(bufnr)
     local window_head_line = vim.fn.line("w0", winner)
     local window_last_line = vim.fn.line("w$", winner)
 
@@ -38,19 +60,19 @@ local function scroll_hover(count, winner, bufnr)
     if count > 0 then
         if cursor_line < window_last_line then
             local target = math.min(window_last_line + count, buffer_line_count)
-            vim.api.nvim_win_set_cursor(winner, { target, 0 })
+            api.nvim_win_set_cursor(winner, { target, 0 })
         else
             local target = math.min(cursor_line + count, buffer_line_count)
-            vim.api.nvim_win_set_cursor(winner, { target, 0 })
+            api.nvim_win_set_cursor(winner, { target, 0 })
         end
         footer_handle(winner, bufnr)
     else
         if cursor_line > window_head_line then
             local target = math.max(window_head_line + count, 1)
-            vim.api.nvim_win_set_cursor(winner, { target, 0 })
+            api.nvim_win_set_cursor(winner, { target, 0 })
         else
             local target = math.max(cursor_line + count, 1)
-            vim.api.nvim_win_set_cursor(winner, { target, 0 })
+            api.nvim_win_set_cursor(winner, { target, 0 })
         end
 
         footer_handle(winner, bufnr)
@@ -59,18 +81,16 @@ local function scroll_hover(count, winner, bufnr)
     vim.opt.scrolloff = cache_scrolloff
 end
 
-local function scroll_or_fallback(count, winner, bufnr)
-    if vim.api.nvim_win_is_valid(winner) then
-        scroll_hover(count, winner, bufnr)
-        return ""
-    end
-
-    local key = count > 0 and "<c-f>" or "<c-b>"
-    return vim.api.nvim_replace_termcodes(key, true, false, true)
-end
-
 ---@param translator SmartTranslate.Translator
 function float.render(translator)
+    local id = "translate"
+    local source_bufnr = translator.buffer
+
+    -- If preview is already open, focus it
+    if focus_open(id) then
+        return
+    end
+
     local title = "SmartTranslate(cache)"
 
     if not translator.use_cache_translation then
@@ -91,11 +111,12 @@ function float.render(translator)
         width = #translator.translation[1]
     end
 
-    local bufnr = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, translator.translation)
+    local bufnr = api.nvim_create_buf(false, true)
+    api.nvim_buf_set_lines(bufnr, 0, -1, false, translator.translation)
     vim.bo[bufnr].filetype = "translate-float"
+    vim.bo[bufnr].bufhidden = "wipe"
 
-    local winner = vim.api.nvim_open_win(bufnr, false, {
+    local winner = api.nvim_open_win(bufnr, false, {
         relative = "cursor",
         row = 1,
         col = 1,
@@ -105,41 +126,63 @@ function float.render(translator)
         title_pos = "center",
         style = "minimal",
         border = "rounded",
-        focusable = false,
+        focusable = true,
         zindex = 200,
     })
 
+    -- Mark the window with an identifier
+    vim.w[winner].smart_translate_preview = id
+
     footer_handle(winner, bufnr)
 
-    -- Page turning system, restore the default function of <c-f> <c-b> when any key is pressed
-    vim.keymap.set({ "n" }, "<c-f>", function()
-        return scroll_or_fallback(5, winner, bufnr)
-    end, { expr = true, silent = true, buffer = 0 })
+    -- Set up keymaps in the float window buffer
+    api.nvim_buf_set_keymap(bufnr, "n", "q", "<cmd>quit!<cr>", { silent = true })
+    api.nvim_buf_set_keymap(bufnr, "n", "<c-f>", "", {
+        callback = function()
+            scroll_hover(5, winner, bufnr)
+        end,
+        silent = true,
+    })
+    api.nvim_buf_set_keymap(bufnr, "n", "<c-b>", "", {
+        callback = function()
+            scroll_hover(-5, winner, bufnr)
+        end,
+        silent = true,
+    })
 
-    vim.keymap.set({ "n" }, "<c-b>", function()
-        return scroll_or_fallback(-5, winner, bufnr)
-    end, { expr = true, silent = true, buffer = 0 })
+    -- Close the popup when navigating to any window which is not the preview itself
+    local group = "smart-translate-popup"
+    local group_id = api.nvim_create_augroup(group, { clear = false })
+    api.nvim_create_augroup(group, { clear = true }) -- Clear the group first
 
-    table.insert(manager, winner)
-    vim.on_key(function(_, keystr)
-        local key = vim.fn.keytrans(keystr):lower()
-        if key ~= "" and key ~= "<c-f>" and key ~= "<c-b>" then
-            local manager_copy = vim.deepcopy(manager)
+    local old_cursor = api.nvim_win_get_cursor(0)
 
-            for index, winid in ipairs(manager_copy) do
-                if vim.api.nvim_win_is_valid(winid) then
-                    vim.api.nvim_win_close(winid, false)
-                end
-
-                table.remove(manager, index)
+    api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+        group = group_id,
+        callback = function()
+            local cursor = api.nvim_win_get_cursor(0)
+            -- Did the cursor REALLY change (neovim/neovim#12923)
+            if
+                (old_cursor[1] ~= cursor[1] or old_cursor[2] ~= cursor[2])
+                and api.nvim_get_current_win() ~= winner
+            then
+                -- Clear the augroup
+                api.nvim_create_augroup(group, { clear = true })
+                pcall(api.nvim_win_close, winner, true)
+                return
             end
+            old_cursor = cursor
+        end,
+    })
 
-            vim.on_key(nil, translator.namespace)
-            vim.api.nvim_buf_del_keymap(0, "n", "<c-f>")
-            vim.api.nvim_buf_del_keymap(0, "n", "<c-b>")
-            return
-        end
-    end, translator.namespace)
+    api.nvim_create_autocmd("WinClosed", {
+        pattern = tostring(winner),
+        group = group_id,
+        callback = function()
+            -- Clear the augroup
+            api.nvim_create_augroup(group, { clear = true })
+        end,
+    })
 end
 
 return float
