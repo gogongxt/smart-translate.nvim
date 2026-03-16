@@ -3,6 +3,7 @@ local util = require("smart-translate.util")
 local config = require("smart-translate.config")
 local cacher = require("smart-translate.core.cacher")
 local content = require("smart-translate.util.content")
+local proxy = require("smart-translate.util.proxy")
 
 ---@param engine string
 ---@return boolean
@@ -78,8 +79,12 @@ end
 ---@param original string[]
 ---@param callback function(translation: string[])
 function EngineProxy:translate(source, target, original, callback)
+    -- Setup proxy and get restore function
+    local restore = proxy.setup()
+
     if not config.default.cache then
         self.engine.translate(source, target, original, function(translation)
+            restore()
             callback(false, translation)
         end)
         return
@@ -88,9 +93,12 @@ function EngineProxy:translate(source, target, original, callback)
     local cached, no_cache = self:query_cache(source, target, original)
 
     if vim.tbl_isempty(no_cache) then
+        restore()
         callback(true, cached)
     else
         self.engine.translate(source, target, original, function(translation)
+            restore()
+
             local cached_copy = vim.deepcopy(cached)
 
             -- When we cannot ensure that the number of lines of the translation and the original text are always consistent, caching should not be performed

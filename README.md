@@ -57,6 +57,8 @@ local default_config = {
         },
         cache = true,
     },
+    -- Proxy configuration: "http://127.0.0.1:7890" or "$HTTP_PROXY"
+    proxy = nil,
     engine = {
         deepl = {
             -- Support SHELL variables, or fill in directly
