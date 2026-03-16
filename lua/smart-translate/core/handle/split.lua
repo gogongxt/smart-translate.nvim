@@ -32,7 +32,7 @@ function split.render(translator)
                 math.max(#translator.translation, 5),
                 math.floor(vim.o.lines * 1 / 5)
             ),
-            focusable = false,
+            focusable = true,
         })
 
         vim.wo[global_window].conceallevel = 2
@@ -53,6 +53,11 @@ function split.render(translator)
                     callback = function()
                         if not vim.api.nvim_win_is_valid(global_window) then
                             events:cleanup()
+                            return
+                        end
+
+                        -- Don't interfere when split window is focused
+                        if vim.api.nvim_get_current_win() == global_window then
                             return
                         end
 
