@@ -24,6 +24,7 @@
 
 ---@class SmartTranslate.Config.EngineOpts
 ---@field public deepl SmartTranslate.Config.EngineOpts.DeepL
+---@field public baidu SmartTranslate.Config.EngineOpts.Baidu
 
 ---@class SmartTranslate.Config.Hooks.BeforeCallOpts
 ---@field public mode string

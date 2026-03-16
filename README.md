@@ -19,7 +19,7 @@ Powerful Caching System Builds Intelligent Translators
 > The following features build the powerful `smart-translate.nvim`.
 
 - Intelligent caching system, no need for repeated API calls, fast and accurate we have it all!
-- Multiple engine support (`google`, `bing`, `deepl`) or build your own translator, more will be added in the future.
+- Multiple engine support (`google`, `bing`, `deepl`, `baidu`) or build your own translator, more will be added in the future.
 - Rich export capabilities (floating window, split window, replace, clipboard)
 
 ## Install and Use
@@ -64,6 +64,12 @@ local default_config = {
             -- Support SHELL variables, or fill in directly
             api_key = "$DEEPL_API_KEY",
             base_url = "https://api-free.deepl.com/v2/translate",
+        },
+        baidu = {
+            -- Support SHELL variables, or fill in directly
+            app_id = "$BAIDU_APP_ID",
+            api_key = "$BAIDU_API_KEY",
+            base_url = "https://fanyi-api.baidu.com/ait/api/aiTextTranslate",
         },
     },
     hooks = {

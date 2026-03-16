@@ -23,6 +23,12 @@ local default_config = {
             api_key = "$DEEPL_API_KEY",
             base_url = "https://api-free.deepl.com/v2/translate",
         },
+        baidu = {
+            --Support SHELL variables, or fill in directly
+            app_id = "$BAIDU_APP_ID",
+            api_key = "$BAIDU_API_KEY",
+            base_url = "https://fanyi-api.baidu.com/ait/api/aiTextTranslate",
+        },
     },
     hooks = {
         ---@param opts SmartTranslate.Config.Hooks.BeforeCallOpts
