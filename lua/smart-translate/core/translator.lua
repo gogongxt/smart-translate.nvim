@@ -43,8 +43,8 @@ function Translator.new(env)
 
     self.buffer = vim.api.nvim_get_current_buf()
     self.window = vim.api.nvim_get_current_win()
-    self.namespace =
-        vim.api.nvim_create_namespace(("Transtor-ns-%s"):format(self.buffer))
+    self.cursor = vim.api.nvim_win_get_cursor(self.window)
+    self.namespace = vim.api.nvim_create_namespace(("Transtor-ns-%s"):format(self.buffer))
 
     self:parser_env(env)
 

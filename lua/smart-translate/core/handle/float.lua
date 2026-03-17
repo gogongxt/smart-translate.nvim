@@ -102,8 +102,7 @@ function float.render(translator)
         width = math.max(width, #l)
     end
 
-    local height =
-        math.min(#translator.translation, math.floor(vim.o.lines * 3 / 4))
+    local height = math.min(#translator.translation, math.floor(vim.o.lines * 3 / 4))
 
     -- When the display length is not long enough to display the title, we will hide the title
     if #translator.translation == 1 and #translator.translation[1] < width then
@@ -116,10 +115,36 @@ function float.render(translator)
     vim.bo[bufnr].filetype = "translate-float"
     vim.bo[bufnr].bufhidden = "wipe"
 
+    -- Calculate display position: show below the selected text
+    local display_row, display_col
+
+    if not vim.tbl_isempty(translator.range) then
+        local last_range = translator.range[#translator.range]
+        local first_range = translator.range[1]
+
+        -- Use the last line of the range
+        display_row = last_range.lnum
+
+        -- If single line selection, align with selection start
+        -- If multi-line selection, align with line start
+        if #translator.range == 1 then
+            display_col = first_range.scol
+        else
+            display_col = 1
+        end
+    else
+        -- Fallback to saved cursor position
+        display_row = translator.cursor[1]
+        display_col = translator.cursor[2] + 1
+    end
+
+    -- Get screen position for the calculated position
+    local screen_pos = vim.fn.screenpos(translator.window, display_row, display_col)
+
     local winner = api.nvim_open_win(bufnr, false, {
-        relative = "cursor",
-        row = 1,
-        col = 1,
+        relative = "editor",
+        row = screen_pos.row,
+        col = screen_pos.col - 1,
         width = width,
         height = height,
         title = title,
@@ -162,10 +187,7 @@ function float.render(translator)
         callback = function()
             local cursor = api.nvim_win_get_cursor(0)
             -- Did the cursor REALLY change (neovim/neovim#12923)
-            if
-                (old_cursor[1] ~= cursor[1] or old_cursor[2] ~= cursor[2])
-                and api.nvim_get_current_win() ~= winner
-            then
+            if (old_cursor[1] ~= cursor[1] or old_cursor[2] ~= cursor[2]) and api.nvim_get_current_win() ~= winner then
                 -- Clear the augroup
                 api.nvim_create_augroup(group, { clear = true })
                 pcall(api.nvim_win_close, winner, true)
