@@ -10,6 +10,7 @@
 
 ---@class SmartTranslate.Config
 ---@field public timeout number Timeout in seconds for HTTP requests
+---@field public float SmartTranslate.Config.Float Float window configuration
 
 ---@class SmartTranslate.Config.EngineOpts.Openai
 ---@field public model string
@@ -58,3 +59,7 @@
 ---@class SmartTranslate.Config.Translator
 ---@field public engine SmartTranslate.Config.Translator.Engine[]
 ---@field public handle SmartTranslate.Config.Translator.Engine[]
+
+---@class SmartTranslate.Config.Float
+---@field public max_width integer Maximum width of the float window (0 means no limit)
+---@field public wrap boolean Enable text wrapping in the float window

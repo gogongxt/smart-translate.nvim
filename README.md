@@ -61,6 +61,11 @@ local default_config = {
     proxy = nil,
     -- Timeout in seconds for HTTP requests (default: 10 seconds)
     timeout = 10,
+    -- Float window configuration
+    float = {
+        max_width = 80,  -- Maximum width of the float window (0 means no limit)
+        wrap = true,     -- Enable text wrapping in the float window
+    },
     engine = {
         deepl = {
             -- Support SHELL variables, or fill in directly

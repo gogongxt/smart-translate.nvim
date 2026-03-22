@@ -2,6 +2,34 @@ local float = {}
 
 local api = vim.api
 local cache_scrolloff = vim.opt.scrolloff:get()
+local config = require("smart-translate.config")
+
+--- Calculate the number of screen lines needed for a line with wrap enabled
+---@param line string
+---@param width integer
+---@return integer
+local function calculate_wrapped_lines(line, width)
+    if width <= 0 then
+        return 1
+    end
+    local line_len = vim.fn.strdisplaywidth(line)
+    if line_len == 0 then
+        return 1
+    end
+    return math.ceil(line_len / width)
+end
+
+--- Calculate total height needed for all lines with wrap enabled
+---@param lines string[]
+---@param width integer
+---@return integer
+local function calculate_total_height(lines, width)
+    local total = 0
+    for _, line in ipairs(lines) do
+        total = total + calculate_wrapped_lines(line, width)
+    end
+    return total
+end
 
 --- Check if a preview window with the given id is open
 ---@param id string
@@ -97,17 +125,42 @@ function float.render(translator)
         title = ("SmartTranslate(%s)"):format(translator.engine)
     end
 
-    local width = title:len()
+    -- Get float configuration
+    local float_config = config.float or {}
+    local max_width = float_config.max_width or 0
+    local enable_wrap = float_config.wrap ~= false -- default to true
+
+    -- Calculate base width from content
+    local base_width = title:len()
     for _, l in ipairs(translator.translation) do
-        width = math.max(width, #l)
+        base_width = math.max(base_width, vim.fn.strdisplaywidth(l))
     end
 
-    local height = math.min(#translator.translation, math.floor(vim.o.lines * 3 / 4))
+    -- Apply max_width limit if configured
+    local width
+    if max_width > 0 and base_width > max_width then
+        width = max_width
+    else
+        width = base_width
+    end
+
+    -- Calculate height considering wrap
+    local height
+    if enable_wrap and max_width > 0 and base_width > max_width then
+        -- Calculate actual height needed when wrap is enabled
+        height = calculate_total_height(translator.translation, width)
+    else
+        -- No wrap or no width limit, use number of lines
+        height = #translator.translation
+    end
+
+    -- Limit height to 3/4 of screen
+    height = math.min(height, math.floor(vim.o.lines * 3 / 4))
 
     -- When the display length is not long enough to display the title, we will hide the title
     if #translator.translation == 1 and #translator.translation[1] < width then
         title = ""
-        width = #translator.translation[1]
+        width = vim.fn.strdisplaywidth(translator.translation[1])
     end
 
     local bufnr = api.nvim_create_buf(false, true)
@@ -167,6 +220,11 @@ function float.render(translator)
 
     -- Mark the window with an identifier
     vim.w[winner].smart_translate_preview = id
+
+    -- Enable wrap if configured
+    if enable_wrap then
+        vim.wo[winner].wrap = true
+    end
 
     footer_handle(winner, bufnr)
 
