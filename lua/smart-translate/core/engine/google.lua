@@ -1,3 +1,4 @@
+local config = require("smart-translate.config")
 local http = require("http")
 
 local google = {}
@@ -52,6 +53,7 @@ function google.translate(source, target, original, callback)
             headers = { ["Content-Type"] = "application/json" },
             json = json_body,
             allow_redirects = true,
+            timeout = config.timeout,
         }
     ):add_done_callback(function(future)
         local err = future:exception()

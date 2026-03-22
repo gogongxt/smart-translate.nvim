@@ -8,6 +8,9 @@
 ---@field public cmds SmartTranslate.Config.DefaultOpts.Cmds
 ---@field public cache string
 
+---@class SmartTranslate.Config
+---@field public timeout number Timeout in seconds for HTTP requests
+
 ---@class SmartTranslate.Config.EngineOpts.Openai
 ---@field public model string
 ---@field public api_key string

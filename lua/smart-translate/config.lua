@@ -17,6 +17,8 @@ local default_config = {
     },
     -- Proxy configuration: "http://127.0.0.1:7890" or "$HTTP_PROXY"
     proxy = nil,
+    -- Timeout in seconds for HTTP requests (default: 10 seconds)
+    timeout = 10,
     engine = {
         deepl = {
             --Support SHELL variables, or fill in directly

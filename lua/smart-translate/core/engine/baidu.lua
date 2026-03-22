@@ -81,6 +81,7 @@ function baidu.translate(source, target, original, callback)
         },
         json = json_body,
         allow_redirects = true,
+        timeout = config.timeout,
     }):add_done_callback(function(future)
         local err = future:exception()
         if err then
