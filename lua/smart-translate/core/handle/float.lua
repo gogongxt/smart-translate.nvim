@@ -141,6 +141,16 @@ function float.render(translator)
     -- Get screen position for the calculated position
     local screen_pos = vim.fn.screenpos(translator.window, display_row, display_col)
 
+    -- When wrap is enabled, a single logical line can span multiple screen rows.
+    -- We need to find the bottom-most screen row of the current line to avoid overlap.
+    -- Use screenpos with a very large column to find where the line ends on screen.
+    local source_wrap = api.nvim_win_get_option(translator.window, "wrap")
+    if source_wrap then
+        local wrap_screen_pos = vim.fn.screenpos(translator.window, display_row, 999999)
+        -- The bottom of the current line is the screen row where the line wraps
+        screen_pos.row = wrap_screen_pos.row
+    end
+
     local winner = api.nvim_open_win(bufnr, false, {
         relative = "editor",
         row = screen_pos.row,
