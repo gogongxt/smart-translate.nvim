@@ -75,6 +75,15 @@ function M.setup(opts)
                 vim.split(content, "\n", { trimempty = false })
         end
 
+        -- Check if float window is already open before translating
+        -- This prevents notification hooks from firing when just focusing existing window
+        if translator.handle == "float" then
+            local float_handle = require("smart-translate.core.handle.float")
+            if float_handle.focus_open("translate") then
+                return
+            end
+        end
+
         translator:translate()
     end, {
         nargs = "*",

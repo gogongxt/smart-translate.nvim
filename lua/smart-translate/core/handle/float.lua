@@ -34,7 +34,7 @@ end
 --- Check if a preview window with the given id is open
 ---@param id string
 ---@return integer? winid
-local function is_open(id)
+function float.is_open(id)
     for _, winid in ipairs(api.nvim_list_wins()) do
         if vim.w[winid].smart_translate_preview == id then
             return winid
@@ -45,8 +45,8 @@ end
 --- Focus the open preview window if it exists
 ---@param id string
 ---@return integer? winid
-local function focus_open(id)
-    local winid = is_open(id)
+function float.focus_open(id)
+    local winid = float.is_open(id)
     if winid then
         api.nvim_set_current_win(winid)
     end
@@ -115,7 +115,7 @@ function float.render(translator)
     local source_bufnr = translator.buffer
 
     -- If preview is already open, focus it
-    if focus_open(id) then
+    if float.focus_open(id) then
         return
     end
 
