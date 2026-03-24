@@ -38,7 +38,15 @@ function util.engines()
             return engine.name:lower()
         end, config.translator.engine)
 
+        -- Add terminal command engines
+        local cmd = require("smart-translate.core.engine.cmd")
+        local commands = cmd.get_commands()
+        local terminal_engines = vim.tbl_map(function(name)
+            return name:lower()
+        end, vim.tbl_keys(commands))
+
         util._engins = vim.fn.extend(build_engine, custom_engine)
+        util._engins = vim.fn.extend(util._engins, terminal_engines)
     end
 
     return util._engins

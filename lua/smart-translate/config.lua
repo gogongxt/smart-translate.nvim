@@ -12,6 +12,7 @@ local default_config = {
             target = "zh-CN",
             handle = "float",
             engine = "google",
+            fallback_engines = nil, -- e.g., {"bing", "deepl"}
         },
         cache = true,
     },
@@ -52,6 +53,7 @@ local default_config = {
     translator = {
         engine = {},
         handle = {},
+        terminal_commands = nil, -- Terminal command definitions
     },
 }
 
@@ -69,7 +71,20 @@ setmetatable(config, {
 
 ---@param opts? table<string, any>
 function config.update(opts)
+    -- Store old terminal_commands to check if cache needs clearing
+    local old_terminal_commands = default_config.translator.terminal_commands
+    local old_custom_engines = default_config.translator.engine
+
     default_config = vim.tbl_deep_extend("force", default_config, opts or {})
+
+    -- Only clear engine cache if terminal_commands or custom engines changed
+    local new_terminal_commands = default_config.translator.terminal_commands
+    local new_custom_engines = default_config.translator.engine
+
+    if old_terminal_commands ~= new_terminal_commands or old_custom_engines ~= new_custom_engines then
+        local util = require("smart-translate.util")
+        util._engins = nil
+    end
 end
 
 return config

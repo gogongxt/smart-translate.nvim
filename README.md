@@ -54,6 +54,7 @@ local default_config = {
             target = "zh-CN",
             handle = "float",
             engine = "google",
+            fallback_engines = nil, -- e.g., {"bing", "deepl"}
         },
         cache = true,
     },
@@ -94,7 +95,8 @@ local default_config = {
     -- Custom translator
     translator = {
         engine = {},
-        handle = {}
+        handle = {},
+        terminal_commands = nil, -- Terminal command definitions
     }
 }
 ```
@@ -185,7 +187,7 @@ require("smart-translate").setup({
                 ---@param source string
                 ---@param target string
                 ---@param original string[]
-                ---@param callback fun(translation: string[])
+                ---@param callback fun(err: string|nil, translation: string[])
                 translate = function(source, target, original, callback)
                     -- 1. Optional: Do you need to convert the command line input language to the language supported by the translator?
                     source = "en"
@@ -201,8 +203,14 @@ require("smart-translate").setup({
                         { text = true },
                         ---@param completed vim.SystemCompleted
                         vim.schedule_wrap(function(completed)
-                            -- 3. Call callback for rendering processing, the translation needs to return string[]
+                            -- 3. Check for errors
+                            if completed.code ~= 0 then
+                                callback(("Exit code %d: %s"):format(completed.code, completed.stderr or "Unknown error"), {})
+                                return
+                            end
+                            -- 4. Call callback for rendering processing, the translation needs to return string[]
                             callback(
+                                nil,
                                 vim.split(
                                     completed.stdout,
                                     "\n",
@@ -247,6 +255,151 @@ require("smart-translate").setup({
 ```
 
 If you need to send an `http` request, you can use the [askfiy/http.nvim](https://github.com/askfiy/http.nvim) plug-in or `vim.system`, refer to [Google](./lua/smart-translate/core/engine/google.lua) translation implementation.
+
+## Multi-Source Fallback (Advanced)
+
+`smart-translate.nvim` supports configuring multiple translation engines with automatic fallback. If the primary engine fails, the next engine in the list is automatically tried.
+
+### Basic Fallback Configuration
+
+```lua
+require("smart-translate").setup({
+    default = {
+        cmds = {
+            engine = "google",
+            fallback_engines = { "bing", "deepl" }, -- Try bing if google fails, then deepl
+        },
+    },
+})
+```
+
+### Terminal Command Engines
+
+You can define custom translation engines that execute shell commands. This is useful for CLI tools like `wd` (WordReference), `trans` (Translate Shell), or any custom script.
+
+```lua
+require("smart-translate").setup({
+    default = {
+        cmds = {
+            engine = "wd", -- Use terminal command as primary
+            handle = "terminal", -- Use terminal handler to preserve ANSI colors
+            fallback_engines = { "google" }, -- Fallback to google if wd fails
+        },
+    },
+    translator = {
+        terminal_commands = {
+            {
+                name = "wd",
+                command = "wd {text}", -- {text} will be replaced with translation text
+                timeout = 10, -- Optional: defaults to config.timeout
+                -- Optional: custom function to check if translation succeeded
+                success_check = function(stdout, stderr)
+                    -- wd returns "无法查询到相关释义" when not found
+                    if stdout:find("无法查询到相关释义") then
+                        return false
+                    end
+                    return vim.trim(stdout) ~= ""
+                end,
+            },
+            {
+                name = "my-custom-translator",
+                command = "/path/to/script.sh --translate {text}",
+                timeout = 30,
+                success_check = function(stdout, stderr)
+                    -- Custom logic to determine success
+                    return stdout:find("SUCCESS") ~= nil
+                end,
+            },
+        },
+    },
+})
+```
+
+> [!WARNING]
+>
+> **Security Consideration**: Terminal commands are executed through `sh -c`, which means you should only use trusted commands from your configuration. Avoid using commands from untrusted sources, as they could potentially execute arbitrary shell commands. The `{text}` placeholder is properly escaped using `shellescape()`, but the command template itself should be trusted.
+
+**Terminal Command Requirements:**
+
+- Use `{text}` placeholder where translation text should be inserted (required)
+- Exit code must be 0 on success
+- stdout must contain non-empty, non-whitespace output
+- Output is split by newlines (one translation per line)
+- **Optional**: Provide `success_check` function for custom success detection
+
+**Preserving ANSI Colors:**
+When using terminal command engines, you can preserve ANSI color codes by setting `handle = "terminal"`. This displays the command output in a terminal buffer with full color support:
+
+```lua
+default = {
+    cmds = {
+        engine = "wd",
+        handle = "terminal", -- Preserves colors from terminal commands
+    },
+},
+```
+
+The `terminal` handler will:
+
+- Execute the command in a Neovim terminal buffer
+- Preserve all ANSI colors and formatting
+- Automatically fall back to `float` handler for non-terminal engines
+
+**Custom Success Check:**
+The `success_check` function receives:
+
+- `stdout` (string): The standard output from the command
+- `stderr` (string): The standard error from the command
+
+It should return `true` if the translation succeeded, `false` otherwise. This is useful when:
+
+- The command returns exit code 0 even on failure
+- The command outputs error messages to stdout instead of stderr
+- You need to check for specific strings in the output
+
+### Failure Detection
+
+An engine is considered failed when:
+
+- Exit code != 0 (for terminal commands)
+- stdout is empty or contains only whitespace
+- HTTP request times out
+- HTTP response status is not OK (4xx, 5xx)
+- Callback receives an error parameter
+- Custom `success_check` function returns `false`
+
+### Cache Behavior with Fallback
+
+When using fallback engines:
+
+- Cache keys are always associated with the **primary engine** (first in list)
+- If a fallback engine succeeds, the translation is cached under the primary engine's key
+- This ensures consistent cache behavior regardless of which engine actually performed the translation
+- Line count matching rules still apply (translations with different line counts won't be cached)
+
+### Example: Robust Production Setup
+
+```lua
+require("smart-translate").setup({
+    default = {
+        cmds = {
+            source = "auto",
+            target = "zh-CN",
+            engine = "wd", -- Fast local dictionary
+            fallback_engines = { "google", "bing" }, -- Fallback to online services
+        },
+    },
+    translator = {
+        terminal_commands = {
+            {
+                name = "wd",
+                command = "wd {text}",
+                timeout = 5, -- Fast timeout for local tool
+            },
+        },
+    },
+})
+```
 
 ## Similar
 

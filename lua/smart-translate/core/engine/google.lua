@@ -37,7 +37,7 @@ end
 ---@param source string
 ---@param target string
 ---@param original string[]
----@param callback function
+---@param callback fun(err: string|nil, translation: string[])
 function google.translate(source, target, original, callback)
     local text = table.concat(original, "\n")
 
@@ -59,12 +59,7 @@ function google.translate(source, target, original, callback)
         local err = future:exception()
 
         if err then
-            vim.api.nvim_echo({
-                {
-                    err,
-                    "ErrorMsg",
-                },
-            }, true, {})
+            callback(tostring(err), {})
             return
         end
 
@@ -72,7 +67,9 @@ function google.translate(source, target, original, callback)
 
         if response:ok() then
             local translation = response:json()["translated"]
-            callback(vim.split(translation, "\n", { trimempty = false }))
+            callback(nil, vim.split(translation, "\n", { trimempty = false }))
+        else
+            callback(("HTTP %d: %s"):format(response:status_code(), response:status_text()), {})
         end
     end)
 end

@@ -178,13 +178,8 @@ function float.render(translator)
         -- Use the last line of the range
         display_row = last_range.lnum
 
-        -- If single line selection, align with selection start
-        -- If multi-line selection, align with line start
-        if #translator.range == 1 then
-            display_col = first_range.scol
-        else
-            display_col = 1
-        end
+        -- Always align with selection start column for consistency
+        display_col = first_range.scol
     else
         -- Fallback to saved cursor position
         display_row = translator.cursor[1]

@@ -1,6 +1,6 @@
 local util = require("smart-translate.util")
 local config = require("smart-translate.config")
-local EngineProxy = require("smart-translate.core.engine")
+local EngineProxies = require("smart-translate.core.engine")
 local HandleProxy = require("smart-translate.core.handle")
 
 local special_cmds = {
@@ -20,11 +20,12 @@ local special_cmds = {
 ---@field public target string                              -- Target language
 ---@field public handle string                              -- Handler
 ---@field public engine string                              -- Translation engine
+---@field public fallback_engines string[]|nil              -- Fallback engines
 ---@field public original string[]                          -- Original text
 ---@field public public translation string[]                -- Translated text
 ---@field public use_cache_translation boolean              -- Whether cache was hit
 ---@field public range table<string, integer>[]             -- Original text range
----@field public engine_proxy SmartTranslate.EngineProxy
+---@field public engine_proxy SmartTranslate.EngineProxy|SmartTranslate.FallbackEngineProxy
 ---@field public handle_proxy SmartTranslate.HandleProxy
 local Translator = {}
 Translator.__index = Translator
@@ -49,7 +50,19 @@ function Translator.new(env)
     self:parser_env(env)
 
     self.use_cache_translation = false
-    self.engine_proxy = EngineProxy.new(self.engine)
+
+    -- Create appropriate proxy based on whether fallback is configured
+    if self.fallback_engines and #self.fallback_engines > 0 then
+        -- Combine primary engine with fallbacks
+        local all_engines = { self.engine }
+        for _, fallback in ipairs(self.fallback_engines) do
+            table.insert(all_engines, fallback)
+        end
+        self.engine_proxy = EngineProxies.FallbackEngineProxy.new(all_engines)
+    else
+        self.engine_proxy = EngineProxies.EngineProxy.new(self.engine)
+    end
+
     self.handle_proxy = HandleProxy.new(self.handle)
 
     return self
@@ -86,8 +99,11 @@ function Translator:translate()
         self.original,
         ---@param use_cache boolean
         ---@param translation string[]
-        function(use_cache, translation)
+        ---@param actual_engine string The engine that actually performed the translation
+        function(use_cache, translation, actual_engine)
             self.use_cache_translation = use_cache
+            -- Update engine to show which engine actually translated
+            self.engine = actual_engine
             self.translation = config.hooks.after_translate({
                 mode = self.mode,
                 engine = self.engine,

@@ -14,6 +14,7 @@ end
 ---@param engine string
 ---@return table
 local function get_engine(engine)
+    -- Try built-in engine
     local ok, pkg = pcall(
         require,
         ("smart-translate.core.engine.%s"):format(engine:lower())
@@ -22,13 +23,29 @@ local function get_engine(engine)
     if ok then
         return pkg
     end
-    ---@param item SmartTranslate.Config.Translator.Engine
 
+    -- Try custom engine from config
+    ---@param item SmartTranslate.Config.Translator.Engine
     local filters = vim.tbl_filter(function(item)
         return item.name == engine
     end, config.translator.engine)
 
-    return not vim.tbl_isempty(filters) and filters[1] or {}
+    if not vim.tbl_isempty(filters) then
+        return filters[1]
+    end
+
+    -- Try terminal command engine
+    local cmd = require("smart-translate.core.engine.cmd")
+    local commands = cmd.get_commands()
+
+    if commands[engine] then
+        return {
+            name = engine,
+            translate = cmd.create_translate_fn(commands[engine])
+        }
+    end
+
+    return {}
 end
 
 --[[
@@ -47,7 +64,7 @@ end
 ]]
 
 ---@class SmartTranslate.Engine
----@field public translate fun(source: string, target: string, original: string[], callback: fun(translation: string[]))
+---@field public translate fun(source: string, target: string, original: string[], callback: fun(err: string|nil, translation: string[]))
 
 ---@class SmartTranslate.EngineProxy
 ---@field private placeholder string
@@ -77,15 +94,24 @@ end
 ---@param source string
 ---@param target string
 ---@param original string[]
----@param callback function(translation: string[])
+---@param callback function(use_cache: boolean, translation: string[], actual_engine: string)
 function EngineProxy:translate(source, target, original, callback)
     -- Setup proxy and get restore function
     local restore = proxy.setup()
 
     if not config.default.cache then
-        self.engine.translate(source, target, original, function(translation)
+        self.engine.translate(source, target, original, function(err, translation)
             restore()
-            callback(false, translation)
+            if err then
+                vim.notify(
+                    ("Translation failed: %s"):format(err),
+                    "ERROR",
+                    { annote = "[smart-translate]" }
+                )
+                callback(false, {}, self.proxy)
+            else
+                callback(false, translation, self.proxy)
+            end
         end)
         return
     end
@@ -94,10 +120,20 @@ function EngineProxy:translate(source, target, original, callback)
 
     if vim.tbl_isempty(no_cache) then
         restore()
-        callback(true, cached)
+        callback(true, cached, self.proxy)
     else
-        self.engine.translate(source, target, original, function(translation)
+        self.engine.translate(source, target, original, function(err, translation)
             restore()
+
+            if err then
+                vim.notify(
+                    ("Translation failed: %s"):format(err),
+                    "ERROR",
+                    { annote = "[smart-translate]" }
+                )
+                callback(false, {}, self.proxy)
+                return
+            end
 
             local cached_copy = vim.deepcopy(cached)
 
@@ -105,7 +141,7 @@ function EngineProxy:translate(source, target, original, callback)
             -- The engines currently experiencing this situation are:
             -- - bing
             if #translation ~= #cached_copy then
-                callback(false, translation)
+                callback(false, translation, self.proxy)
             else
                 local no_cache_index = 1
                 for index, line in ipairs(cached) do
@@ -123,7 +159,7 @@ function EngineProxy:translate(source, target, original, callback)
                         no_cache_index = no_cache_index + 1
                     end
                 end
-                callback(false, cached_copy)
+                callback(false, cached_copy, self.proxy)
             end
         end)
     end
@@ -170,4 +206,176 @@ function EngineProxy:query_cache(source, target, original)
     return cached, no_cache
 end
 
-return EngineProxy
+---@class SmartTranslate.FallbackEngineProxy
+---@field private engines string[] List of engine names to try in order
+---@field private current_index integer Current engine being tried
+---@field private source string
+---@field private target string
+---@field private original string[]
+---@field private final_callback function
+---@field private cache_hits string[] Lines from cache
+---@field private cache_misses string[] Lines needing translation
+---@field private placeholder string
+---@field private successful_engine string|nil The engine that successfully translated
+local FallbackEngineProxy = {}
+FallbackEngineProxy.__index = FallbackEngineProxy
+
+---@param engines string[] Engine names in priority order
+function FallbackEngineProxy.new(engines)
+    local self = setmetatable({}, FallbackEngineProxy)
+
+    assert(#engines > 0, "At least one engine must be specified")
+
+    -- Validate all engines exist
+    for _, engine in ipairs(engines) do
+        assert(has_engine(engine), ("Invalid engine: %s"):format(engine))
+    end
+
+    self.engines = engines
+    self.current_index = 1
+    self.placeholder = "{{NO_CACHE}}"
+
+    return self
+end
+
+---@param source string
+---@param target string
+---@param original string[]
+---@param callback function(use_cache: boolean, translation: string[], actual_engine: string)
+function FallbackEngineProxy:translate(source, target, original, callback)
+    local restore = proxy.setup()
+
+    self.source = source
+    self.target = target
+    self.original = original
+    self.final_callback = callback
+
+    if not config.default.cache then
+        self:try_next_engine(restore, original)
+        return
+    end
+
+    -- Check cache using first engine (cache key includes engine name)
+    local first_engine_proxy = EngineProxy.new(self.engines[1])
+    local cached, no_cache = first_engine_proxy:query_cache(source, target, original)
+
+    self.cache_hits = cached
+    self.cache_misses = no_cache
+
+    if vim.tbl_isempty(no_cache) then
+        restore()
+        callback(true, cached, self.engines[1])
+    else
+        self:try_next_engine(restore, no_cache)
+    end
+end
+
+---@param restore function Function to restore proxy settings
+---@param to_translate string[] Text to translate
+function FallbackEngineProxy:try_next_engine(restore, to_translate)
+    if self.current_index > #self.engines then
+        -- All engines failed
+        restore()
+        vim.notify(
+            ("All %d translation engines failed"):format(#self.engines),
+            "ERROR",
+            { annote = "[smart-translate]" }
+        )
+        self.final_callback(false, {})
+        return
+    end
+
+    local engine_name = self.engines[self.current_index]
+    local engine = get_engine(engine_name)
+
+    engine.translate(self.source, self.target, to_translate, function(err, translation)
+        -- Check for explicit error
+        if err then
+            vim.notify(
+                ("Engine '%s' failed: %s"):format(engine_name, err),
+                "WARN",
+                { annote = "[smart-translate]" }
+            )
+            self.current_index = self.current_index + 1
+            self:try_next_engine(restore, to_translate)
+            return
+        end
+
+        -- Check for empty translation (could be valid but unusual)
+        if #translation == 0 then
+            vim.notify(
+                ("Engine '%s' returned empty translation"):format(engine_name),
+                "WARN",
+                { annote = "[smart-translate]" }
+            )
+            self.current_index = self.current_index + 1
+            self:try_next_engine(restore, to_translate)
+            return
+        end
+
+        -- Success! Handle caching and merge results
+        restore()
+        self.successful_engine = engine_name
+        self:handle_success(engine_name, translation)
+    end)
+end
+
+---@param engine_name string The engine that succeeded
+---@param translation string[] Translation result
+function FallbackEngineProxy:handle_success(engine_name, translation)
+    -- If no caching or all from cache
+    if not config.default.cache or not self.cache_hits then
+        self.final_callback(false, translation, engine_name)
+        return
+    end
+
+    -- Check line count matches for caching
+    if #translation ~= #self.cache_misses then
+        -- Line count mismatch - return translation directly but don't cache
+        -- For terminal commands like 'wd' that return multiple lines for single input
+        self.final_callback(false, translation, engine_name)
+        return
+    end
+
+    -- Cache the successful translation with the FIRST engine's cache key
+    -- This ensures consistency - cache is always associated with primary engine
+    local first_engine_proxy = EngineProxy.new(self.engines[1])
+
+    for i, line in ipairs(translation) do
+        local cache_key = first_engine_proxy:cache_key(
+            self.source,
+            self.target,
+            vim.trim(self.cache_misses[i])
+        )
+        cacher.set(cache_key, vim.trim(line))
+    end
+
+    -- Merge cached lines with new translation
+    local merged_result = self:merge_with_cache(translation)
+    self.final_callback(false, merged_result, engine_name)
+end
+
+---@param translation string[] Translation for cache-miss lines
+---@return string[]
+function FallbackEngineProxy:merge_with_cache(translation)
+    if not self.cache_hits then
+        return translation
+    end
+
+    local result = vim.deepcopy(self.cache_hits)
+    local trans_idx = 1
+
+    for i, line in ipairs(result) do
+        if line == self.placeholder then
+            result[i] = translation[trans_idx]
+            trans_idx = trans_idx + 1
+        end
+    end
+
+    return result
+end
+
+return {
+    EngineProxy = EngineProxy,
+    FallbackEngineProxy = FallbackEngineProxy,
+}
