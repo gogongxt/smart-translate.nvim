@@ -27,13 +27,9 @@ function M.setup(opts)
             end
 
             if not vim.tbl_isempty(translator.original) then
-                vim.notify(
-                    "Unable to translate when special operations are executed",
-                    "ERROR",
-                    {
-                        annote = "[smart-translate]",
-                    }
-                )
+                vim.notify("Unable to translate when special operations are executed", "ERROR", {
+                    annote = "[smart-translate]",
+                })
                 return
             end
         end
@@ -57,11 +53,9 @@ function M.setup(opts)
             translator.original = { table.concat(translator.original, " ") }
         else
             if not vim.tbl_contains(translator.special, "--comment") then
-                translator.range, translator.original =
-                    unpack(parser.select(translator.mode))
+                translator.range, translator.original = unpack(parser.select(translator.mode))
             else
-                translator.range, translator.original =
-                    unpack(parser.comment(translator.buffer))
+                translator.range, translator.original = unpack(parser.comment(translator.buffer))
             end
 
             local content = table.concat(translator.original, "\n")
@@ -71,16 +65,34 @@ function M.setup(opts)
                 })
                 return
             end
-            translator.original =
-                vim.split(content, "\n", { trimempty = false })
+            translator.original = vim.split(content, "\n", { trimempty = false })
         end
 
-        -- Check if float window is already open before translating
-        -- This prevents notification hooks from firing when just focusing existing window
+        -- Check if we're translating from within a translate float window
+        -- If so, allow nested translation by skipping the focus check
+        local current_win = vim.api.nvim_get_current_win()
+        local is_in_translate_window = vim.w[current_win].smart_translate_preview ~= nil
+
+        -- Handle focus behavior for float windows
         if translator.handle == "float" then
             local float_handle = require("smart-translate.core.handle.float")
-            if float_handle.focus_open("translate") then
-                return
+
+            if is_in_translate_window then
+                -- If in a translate window without any text selection,
+                -- focus the topmost existing window instead of creating a new one
+                if vim.tbl_isempty(translator.original) then
+                    local topmost_win = float_handle.get_topmost_window()
+                    if topmost_win and topmost_win ~= current_win then
+                        api.nvim_set_current_win(topmost_win)
+                        return
+                    end
+                end
+                -- If text is selected, allow creating a new nested window
+            else
+                -- If not in a translate window, focus the base translate window if it exists
+                if float_handle.focus_open("translate") then
+                    return
+                end
             end
         end
 

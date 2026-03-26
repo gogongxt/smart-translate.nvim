@@ -42,6 +42,62 @@ function float.is_open(id)
     end
 end
 
+--- Find the topmost (highest nesting level) translate window
+---@return integer? winid
+function float.get_topmost_window()
+    local topmost_winid = nil
+    local topmost_level = 0
+
+    for _, winid in ipairs(api.nvim_list_wins()) do
+        local id = vim.w[winid].smart_translate_preview
+        if id then
+            -- Extract nesting level from ID
+            local level = 0
+            if id == "translate" then
+                level = 1
+            elseif id:match("^translate_n(%d+)$") then
+                level = tonumber(id:match("^translate_n(%d+)$"))
+            end
+
+            if level > topmost_level then
+                topmost_level = level
+                topmost_winid = winid
+            end
+        end
+    end
+
+    return topmost_winid
+end
+
+--- Get the parent window of a nested translate window
+---@param winid integer
+---@return integer? parent_winid
+function float.get_parent_window(winid)
+    local id = vim.w[winid].smart_translate_preview
+    if not id then
+        return nil
+    end
+
+    local current_level = 0
+    if id == "translate" then
+        current_level = 1
+    elseif id:match("^translate_n(%d+)$") then
+        current_level = tonumber(id:match("^translate_n(%d+)$"))
+    else
+        return nil
+    end
+
+    -- Find the parent window (level - 1)
+    if current_level <= 1 then
+        return nil
+    end
+
+    local parent_level = current_level - 1
+    local parent_id = parent_level == 1 and "translate" or ("translate_n" .. parent_level)
+
+    return float.is_open(parent_id)
+end
+
 --- Focus the open preview window if it exists
 ---@param id string
 ---@return integer? winid
@@ -114,15 +170,45 @@ function float.render(translator)
     local id = "translate"
     local source_bufnr = translator.buffer
 
-    -- If preview is already open, focus it
-    if float.focus_open(id) then
-        return
+    -- Determine nesting level based on current window
+    local current_win = api.nvim_get_current_win()
+    local current_id = vim.w[current_win].smart_translate_preview
+    local nesting_level = 0
+
+    if current_id then
+        -- We're in a translate window, extract its level
+        if current_id:match("^translate_n(%d+)$") then
+            nesting_level = tonumber(current_id:match("^translate_n(%d+)$"))
+        elseif current_id == "translate" then
+            nesting_level = 1
+        end
+
+        -- The next level window should have level + 1
+        local next_level = nesting_level + 1
+        id = "translate_n" .. next_level
+
+        -- Check if this nested window already exists and focus it
+        if float.focus_open(id) then
+            return
+        end
+    else
+        -- We're not in a translate window, this is the first level
+        -- Check if first-level window already exists and focus it
+        if float.focus_open(id) then
+            return
+        end
     end
 
     local title = "SmartTranslate(cache)"
-
     if not translator.use_cache_translation then
         title = ("SmartTranslate(%s)"):format(translator.engine)
+    end
+
+    -- Add nesting level indicator for nested translations
+    -- The new window's level is current_level + 1 (or 1 if this is the first window)
+    local display_level = nesting_level + 1
+    if display_level > 1 then
+        title = title .. (" [L%d]"):format(display_level)
     end
 
     -- Get float configuration
@@ -210,7 +296,7 @@ function float.render(translator)
         style = "minimal",
         border = "rounded",
         focusable = true,
-        zindex = 200,
+        zindex = 200 + display_level * 10, -- Increase zindex for nested windows
     })
 
     -- Mark the window with an identifier
@@ -224,7 +310,27 @@ function float.render(translator)
     footer_handle(winner, bufnr)
 
     -- Set up keymaps in the float window buffer
-    api.nvim_buf_set_keymap(bufnr, "n", "q", "<cmd>quit!<cr>", { silent = true })
+    api.nvim_buf_set_keymap(bufnr, "n", "q", "", {
+        callback = function()
+            -- Get parent window before closing
+            local parent_winid = float.get_parent_window(winner)
+
+            -- If parent exists, navigate to it first (this will update its autocmd state)
+            -- Then close current window
+            if parent_winid and api.nvim_win_is_valid(parent_winid) then
+                api.nvim_set_current_win(parent_winid)
+                -- Now safe to close the child window
+                api.nvim_win_close(winner, true)
+            else
+                -- No parent, close and return to source window
+                api.nvim_win_close(winner, true)
+                if api.nvim_win_is_valid(translator.window) then
+                    api.nvim_set_current_win(translator.window)
+                end
+            end
+        end,
+        silent = true,
+    })
     api.nvim_buf_set_keymap(bufnr, "n", "<c-f>", "", {
         callback = function()
             scroll_hover(5, winner, bufnr)
@@ -238,25 +344,63 @@ function float.render(translator)
         silent = true,
     })
 
-    -- Close the popup when navigating to any window which is not the preview itself
-    local group = "smart-translate-popup"
-    local group_id = api.nvim_create_augroup(group, { clear = false })
-    api.nvim_create_augroup(group, { clear = true }) -- Clear the group first
+    -- Add visual mode keymaps for nested translation
+    api.nvim_buf_set_keymap(bufnr, "v", "q", "<esc>", { silent = true })
+    api.nvim_buf_set_keymap(bufnr, "v", "<c-f>", "", {
+        callback = function()
+            scroll_hover(5, winner, bufnr)
+        end,
+        silent = true,
+    })
+    api.nvim_buf_set_keymap(bufnr, "v", "<c-b>", "", {
+        callback = function()
+            scroll_hover(-5, winner, bufnr)
+        end,
+        silent = true,
+    })
 
-    local old_cursor = api.nvim_win_get_cursor(0)
+    -- Close the popup when navigating to any window which is not the preview itself
+    -- Use unique augroup per window to avoid conflicts with nested windows
+    local group = "smart-translate-popup-" .. id
+    local group_id = api.nvim_create_augroup(group, { clear = true })
+
+    -- Track the last window where cursor was moved
+    -- This helps detect when user has entered this window vs. stayed in parent window
+    local last_win = api.nvim_get_current_win()
+    local last_cursor = api.nvim_win_get_cursor(0)
 
     api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
         group = group_id,
         callback = function()
             local cursor = api.nvim_win_get_cursor(0)
-            -- Did the cursor REALLY change (neovim/neovim#12923)
-            if (old_cursor[1] ~= cursor[1] or old_cursor[2] ~= cursor[2]) and api.nvim_get_current_win() ~= winner then
-                -- Clear the augroup
-                api.nvim_create_augroup(group, { clear = true })
-                pcall(api.nvim_win_close, winner, true)
+            local current_win = api.nvim_get_current_win()
+
+            -- Check if we're leaving this window
+            if current_win ~= winner then
+                local target_id = vim.w[current_win].smart_translate_preview
+
+                -- Close if:
+                -- 1. Moving to a non-translate window, OR
+                -- 2. User never entered this window (last_win was not this window)
+                --    AND moving to any other window
+                if not target_id then
+                    -- Moving to a non-translate window, close this window
+                    api.nvim_create_augroup(group, { clear = true })
+                    pcall(api.nvim_win_close, winner, true)
+                    return
+                elseif last_win ~= winner then
+                    -- User never entered this window, close it
+                    api.nvim_create_augroup(group, { clear = true })
+                    pcall(api.nvim_win_close, winner, true)
+                    return
+                end
+                -- Moving to another translate window and user had entered this window, keep it open
                 return
             end
-            old_cursor = cursor
+
+            -- Cursor moved within this window, update tracking
+            last_win = current_win
+            last_cursor = cursor
         end,
     })
 
