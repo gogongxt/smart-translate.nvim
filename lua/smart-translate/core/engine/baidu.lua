@@ -47,7 +47,7 @@ end
 ---@param source string
 ---@param target string
 ---@param original string[]
----@param callback fun(err: string|nil, translation: string[])
+---@param callback fun(err: string|nil, translation: string[], highlights: table[]|nil)
 function baidu.translate(source, target, original, callback)
     local text = table.concat(original, "\n")
 
@@ -85,7 +85,7 @@ function baidu.translate(source, target, original, callback)
     }):add_done_callback(function(future)
         local err = future:exception()
         if err then
-            callback(tostring(err), {})
+            callback(tostring(err), {}, nil)
             return
         end
 
@@ -100,12 +100,12 @@ function baidu.translate(source, target, original, callback)
                 for _, item in ipairs(result.trans_result) do
                     table.insert(translations, item.dst)
                 end
-                callback(nil, translations)
+                callback(nil, translations, nil)
             else
-                callback("Baidu translation failed: " .. vim.inspect(result), {})
+                callback("Baidu translation failed: " .. vim.inspect(result), {}, nil)
             end
         else
-            callback(("HTTP %d: %s"):format(response:status_code(), response:status_text()), {})
+            callback(("HTTP %d: %s"):format(response:status_code(), response:status_text()), {}, nil)
         end
     end)
 end

@@ -45,7 +45,7 @@ end
 ---@param source string
 ---@param target string
 ---@param original string[]
----@param callback fun(err: string|nil, translation: string[])
+---@param callback fun(err: string|nil, translation: string[], highlights: table[]|nil)
 function deepl.translate(source, target, original, callback)
     local json_body = {
         text = original,
@@ -72,7 +72,7 @@ function deepl.translate(source, target, original, callback)
     }):add_done_callback(function(future)
         local err = future:exception()
         if err then
-            callback(tostring(err), {})
+            callback(tostring(err), {}, nil)
             return
         end
 
@@ -80,9 +80,9 @@ function deepl.translate(source, target, original, callback)
         if response:ok() then
             callback(nil, vim.tbl_map(function(item)
                 return item.text
-            end, response:json()["translations"]))
+            end, response:json()["translations"]), nil)
         else
-            callback(("HTTP %d: %s"):format(response:status_code(), response:status_text()), {})
+            callback(("HTTP %d: %s"):format(response:status_code(), response:status_text()), {}, nil)
         end
     end)
 end

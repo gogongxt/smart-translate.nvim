@@ -4,6 +4,92 @@ local api = vim.api
 local cache_scrolloff = vim.opt.scrolloff:get()
 local config = require("smart-translate.config")
 
+--- Get ANSI color from terminal configuration
+---@param term_idx integer Terminal color index (0-15)
+---@return string
+local function get_terminal_color(term_idx)
+    -- First try Neovim's terminal_color_* globals (set by colorscheme)
+    local color = vim.g["terminal_color_" .. term_idx]
+    if color then
+        return color
+    end
+
+    -- Fallback to Dracula ANSI colors (from kitty current-theme.conf)
+    local defaults = {
+        [0] = "#21222c", -- black
+        [1] = "#ff5555", -- red
+        [2] = "#50fa7b", -- green
+        [3] = "#f1fa8c", -- yellow
+        [4] = "#bd93f9", -- blue
+        [5] = "#ff79c6", -- magenta
+        [6] = "#8be9fd", -- cyan
+        [7] = "#f8f8f2", -- white
+        [8] = "#6272a4", -- bright black
+        [9] = "#ff6e6e", -- bright red
+        [10] = "#69ff94", -- bright green
+        [11] = "#ffffa5", -- bright yellow
+        [12] = "#d6acff", -- bright blue
+        [13] = "#ff92df", -- bright magenta
+        [14] = "#a4ffff", -- bright cyan
+        [15] = "#ffffff", -- bright white
+    }
+    return defaults[term_idx]
+end
+
+--- ANSI code to terminal color index mapping
+local ansi_to_terminal = {
+    [30] = 0,
+    [31] = 1,
+    [32] = 2,
+    [33] = 3,
+    [34] = 4,
+    [35] = 5,
+    [36] = 6,
+    [37] = 7,
+    [90] = 8,
+    [91] = 9,
+    [92] = 10,
+    [93] = 11,
+    [94] = 12,
+    [95] = 13,
+    [96] = 14,
+    [97] = 15,
+}
+
+--- Apply ANSI highlights to buffer dynamically
+---@param bufnr integer
+---@param highlights table[]
+local function apply_ansi_highlights(bufnr, highlights)
+    local ns = api.nvim_create_namespace("smart-translate-ansi")
+
+    -- Group highlights by color code for batch processing
+    local by_color = {}
+    for _, hl in ipairs(highlights) do
+        local color_code = hl.ansi_code
+        if not by_color[color_code] then
+            by_color[color_code] = {}
+        end
+        table.insert(by_color[color_code], hl)
+    end
+
+    -- Apply highlights with dynamically fetched colors
+    for color_code, hls in pairs(by_color) do
+        local term_idx = ansi_to_terminal[color_code]
+        if term_idx then
+            local color = get_terminal_color(term_idx)
+            local hl_name = "TranslateAnsi" .. term_idx
+
+            -- Define highlight with current terminal color
+            api.nvim_set_hl(0, hl_name, { fg = color })
+
+            -- Apply to all positions with this color
+            for _, hl in ipairs(hls) do
+                api.nvim_buf_add_highlight(bufnr, ns, hl_name, hl.line, hl.col_start, hl.col_end)
+            end
+        end
+    end
+end
+
 --- Calculate the number of screen lines needed for a line with wrap enabled
 ---@param line string
 ---@param width integer
@@ -254,6 +340,11 @@ function float.render(translator)
     vim.bo[bufnr].filetype = "translate-float"
     vim.bo[bufnr].bufhidden = "wipe"
 
+    -- Apply ANSI highlights if available
+    if translator.highlights then
+        apply_ansi_highlights(bufnr, translator.highlights)
+    end
+
     -- Calculate display position: show below the selected text
     local display_row, display_col
 
@@ -301,6 +392,9 @@ function float.render(translator)
 
     -- Mark the window with an identifier
     vim.w[winner].smart_translate_preview = id
+
+    -- Set winhl to use Normal for background (to match terminal background)
+    vim.wo[winner].winhl = "Normal:Normal"
 
     -- Enable wrap if configured
     if enable_wrap then

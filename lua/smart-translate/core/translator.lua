@@ -23,6 +23,7 @@ local special_cmds = {
 ---@field public fallback_engines string[]|nil              -- Fallback engines
 ---@field public original string[]                          -- Original text
 ---@field public public translation string[]                -- Translated text
+---@field public highlights table[]|nil                     -- ANSI color highlights
 ---@field public use_cache_translation boolean              -- Whether cache was hit
 ---@field public range table<string, integer>[]             -- Original text range
 ---@field public engine_proxy SmartTranslate.EngineProxy|SmartTranslate.FallbackEngineProxy
@@ -100,10 +101,12 @@ function Translator:translate()
         ---@param use_cache boolean
         ---@param translation string[]
         ---@param actual_engine string The engine that actually performed the translation
-        function(use_cache, translation, actual_engine)
+        ---@param highlights table[]|nil ANSI color highlights
+        function(use_cache, translation, actual_engine, highlights)
             self.use_cache_translation = use_cache
             -- Update engine to show which engine actually translated
             self.engine = actual_engine
+            self.highlights = highlights
             self.translation = config.hooks.after_translate({
                 mode = self.mode,
                 engine = self.engine,

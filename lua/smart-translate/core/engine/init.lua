@@ -64,7 +64,7 @@ end
 ]]
 
 ---@class SmartTranslate.Engine
----@field public translate fun(source: string, target: string, original: string[], callback: fun(err: string|nil, translation: string[]))
+---@field public translate fun(source: string, target: string, original: string[], callback: fun(err: string|nil, translation: string[], highlights: table[]|nil))
 
 ---@class SmartTranslate.EngineProxy
 ---@field private placeholder string
@@ -94,13 +94,13 @@ end
 ---@param source string
 ---@param target string
 ---@param original string[]
----@param callback function(use_cache: boolean, translation: string[], actual_engine: string)
+---@param callback function(use_cache: boolean, translation: string[], actual_engine: string, highlights: table[]|nil)
 function EngineProxy:translate(source, target, original, callback)
     -- Setup proxy and get restore function
     local restore = proxy.setup()
 
     if not config.default.cache then
-        self.engine.translate(source, target, original, function(err, translation)
+        self.engine.translate(source, target, original, function(err, translation, highlights)
             restore()
             if err then
                 vim.notify(
@@ -108,9 +108,9 @@ function EngineProxy:translate(source, target, original, callback)
                     "ERROR",
                     { annote = "[smart-translate]" }
                 )
-                callback(false, {}, self.proxy)
+                callback(false, {}, self.proxy, nil)
             else
-                callback(false, translation, self.proxy)
+                callback(false, translation, self.proxy, highlights)
             end
         end)
         return
@@ -120,9 +120,9 @@ function EngineProxy:translate(source, target, original, callback)
 
     if vim.tbl_isempty(no_cache) then
         restore()
-        callback(true, cached, self.proxy)
+        callback(true, cached, self.proxy, nil)
     else
-        self.engine.translate(source, target, original, function(err, translation)
+        self.engine.translate(source, target, original, function(err, translation, highlights)
             restore()
 
             if err then
@@ -131,7 +131,7 @@ function EngineProxy:translate(source, target, original, callback)
                     "ERROR",
                     { annote = "[smart-translate]" }
                 )
-                callback(false, {}, self.proxy)
+                callback(false, {}, self.proxy, nil)
                 return
             end
 
@@ -141,7 +141,7 @@ function EngineProxy:translate(source, target, original, callback)
             -- The engines currently experiencing this situation are:
             -- - bing
             if #translation ~= #cached_copy then
-                callback(false, translation, self.proxy)
+                callback(false, translation, self.proxy, highlights)
             else
                 local no_cache_index = 1
                 for index, line in ipairs(cached) do
@@ -159,7 +159,7 @@ function EngineProxy:translate(source, target, original, callback)
                         no_cache_index = no_cache_index + 1
                     end
                 end
-                callback(false, cached_copy, self.proxy)
+                callback(false, cached_copy, self.proxy, nil)
             end
         end)
     end
@@ -241,7 +241,7 @@ end
 ---@param source string
 ---@param target string
 ---@param original string[]
----@param callback function(use_cache: boolean, translation: string[], actual_engine: string)
+---@param callback function(use_cache: boolean, translation: string[], actual_engine: string, highlights: table[]|nil)
 function FallbackEngineProxy:translate(source, target, original, callback)
     local restore = proxy.setup()
 
@@ -264,7 +264,7 @@ function FallbackEngineProxy:translate(source, target, original, callback)
 
     if vim.tbl_isempty(no_cache) then
         restore()
-        callback(true, cached, self.engines[1])
+        callback(true, cached, self.engines[1], nil)
     else
         self:try_next_engine(restore, no_cache)
     end
@@ -281,14 +281,14 @@ function FallbackEngineProxy:try_next_engine(restore, to_translate)
             "ERROR",
             { annote = "[smart-translate]" }
         )
-        self.final_callback(false, {})
+        self.final_callback(false, {}, nil, nil)
         return
     end
 
     local engine_name = self.engines[self.current_index]
     local engine = get_engine(engine_name)
 
-    engine.translate(self.source, self.target, to_translate, function(err, translation)
+    engine.translate(self.source, self.target, to_translate, function(err, translation, highlights)
         -- Check for explicit error
         if err then
             vim.notify(
@@ -316,16 +316,17 @@ function FallbackEngineProxy:try_next_engine(restore, to_translate)
         -- Success! Handle caching and merge results
         restore()
         self.successful_engine = engine_name
-        self:handle_success(engine_name, translation)
+        self:handle_success(engine_name, translation, highlights)
     end)
 end
 
 ---@param engine_name string The engine that succeeded
 ---@param translation string[] Translation result
-function FallbackEngineProxy:handle_success(engine_name, translation)
+---@param highlights table[]|nil ANSI highlights
+function FallbackEngineProxy:handle_success(engine_name, translation, highlights)
     -- If no caching or all from cache
     if not config.default.cache or not self.cache_hits then
-        self.final_callback(false, translation, engine_name)
+        self.final_callback(false, translation, engine_name, highlights)
         return
     end
 
@@ -333,7 +334,7 @@ function FallbackEngineProxy:handle_success(engine_name, translation)
     if #translation ~= #self.cache_misses then
         -- Line count mismatch - return translation directly but don't cache
         -- For terminal commands like 'wd' that return multiple lines for single input
-        self.final_callback(false, translation, engine_name)
+        self.final_callback(false, translation, engine_name, highlights)
         return
     end
 
@@ -352,7 +353,7 @@ function FallbackEngineProxy:handle_success(engine_name, translation)
 
     -- Merge cached lines with new translation
     local merged_result = self:merge_with_cache(translation)
-    self.final_callback(false, merged_result, engine_name)
+    self.final_callback(false, merged_result, engine_name, nil)
 end
 
 ---@param translation string[] Translation for cache-miss lines
