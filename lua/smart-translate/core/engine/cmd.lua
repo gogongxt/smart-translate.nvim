@@ -2,6 +2,15 @@ local config = require("smart-translate.config")
 
 local cmd = {}
 
+--- Strip ANSI escape sequences from a string
+---@param str string
+---@return string
+local function strip_ansi(str)
+    -- Remove ANSI escape sequences: ESC [ ... m (colors) and other ESC sequences
+    -- ESC is \27 (decimal) or \x1b (hex)
+    return str:gsub("\27%[[%d;]*m", ""):gsub("\27%[[%d;]*[A-Za-z]", "")
+end
+
 --- Get terminal command definitions from config
 ---@return table<string, SmartTranslate.Config.Translator.Engine.TerminalCommand>
 function cmd.get_commands()
@@ -36,8 +45,8 @@ function cmd.create_translate_fn(command_def)
             { "sh", "-c", final_command },
             { text = true, timeout = timeout },
             vim.schedule_wrap(function(result)
-                local stdout = result.stdout or ""
-                local stderr = result.stderr or ""
+                local stdout = strip_ansi(result.stdout or "")
+                local stderr = strip_ansi(result.stderr or "")
 
                 -- Check exit code
                 if result.code ~= 0 then
