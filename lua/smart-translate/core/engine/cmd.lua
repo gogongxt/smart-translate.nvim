@@ -143,8 +143,9 @@ function cmd.create_translate_fn(command_def)
         local final_command = command_def.command:gsub("{text}", escaped_text)
 
         -- Use shell to execute the command to handle complex commands properly
+        -- FORCE_COLOR=1 forces terminal commands to output ANSI color codes even when piped
         vim.system(
-            { "sh", "-c", final_command },
+            { "sh", "-c", "FORCE_COLOR=1 " .. final_command },
             { text = true, timeout = timeout },
             vim.schedule_wrap(function(result)
                 local stdout = result.stdout or ""
